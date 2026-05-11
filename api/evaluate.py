@@ -144,24 +144,24 @@ def extract_features(student_answer, base_answer, similarity):
         student_sentences,
     ]])
 
-def test_evaluate_answer():
-    csv_path = 'api/results.csv'
-    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile)
+# def test_evaluate_answer():
+#     csv_path = 'api/results.csv'
+#     with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+#         writer = csv.writer(csvfile)
     
-        # Cabeçalho do CSV
-        writer.writerow(['question_id', 'answer', 'original_grade', 'evaluated_grade'])
+#         # Cabeçalho do CSV
+#         writer.writerow(['question_id', 'answer', 'original_grade', 'evaluated_grade'])
             
-        for id in _answers.get('answers', []):
-            respostas = id.get('answers')
+#         for id in _answers.get('answers', []):
+#             respostas = id.get('answers')
 
-            for resposta in respostas:
-                answer = resposta.get('answer')
-                resultado = evaluate_answer(answer, id.get('id'))
-                grade = resposta.get('grade')
-                writer.writerow([id.get('id'), answer, grade, resultado.get('score')])       
+#             for resposta in respostas:
+#                 answer = resposta.get('answer')
+#                 resultado = evaluate_answer(answer, id.get('id'))
+#                 grade = resposta.get('grade')
+#                 writer.writerow([id.get('id'), answer, grade, resultado.get('score')])       
 
-    print("CSV gerado com sucesso!")
+#     print("CSV gerado com sucesso!")
 
 
-test_evaluate_answer()
+# test_evaluate_answer()

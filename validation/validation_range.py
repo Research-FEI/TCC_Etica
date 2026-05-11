@@ -27,9 +27,9 @@ for col in colunas_notas:
 
 # 3. FILTRO: Selecionar apenas notas originais entre 0.3 e 0.75
 # O símbolo '&' significa 'e' (ambas as condições devem ser verdadeiras)
-df_filtrado = df[(df['nota_original'] >= 0.5) & (df['nota_original'] <= 1.0)].dropna()
+df_filtrado = df[(df['nota_original'] >= 0.5) & (df['nota_original'] <= 1.0) & (df['QID'] == 5)].dropna()
 
-print(f"Total de linhas encontradas no intervalo [0.3 - 0.75]: {len(df_filtrado)}")
+print(f"Total de linhas encontradas no intervalo [0.0 - 0.5]: {len(df_filtrado)}")
 
 # 4. Cálculo do RMSE para os dados filtrados
 colunas_teste = ['nota_tcc', 'nota_gpt', 'nota_gemini']
@@ -45,7 +45,7 @@ cores = ['#3498db', '#e74c3c', '#2ecc71']
 barras = plt.bar(colunas_teste, valores_rmse, color=cores)
 
 plt.ylabel('RMSE (Menor é melhor)')
-plt.title('RMSE - Apenas Notas Originais entre 0.3 e 0.75')
+plt.title('RMSE - Range de 0.5 - 1.0 questão 5')
 
 # Adicionar valores no topo das barras
 for barra in barras:

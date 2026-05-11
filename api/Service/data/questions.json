@@ -64,10 +64,13 @@
       "id": 6,
       "question": "O que é ética?",
       "reference_answer": [
-        "Ética é um ramo da filosofia que estuda os princípios morais que governam nossas decisões e comportamentos.",
-        "Exemplo de respota top aqui"
+        "Ética é o conjunto de princípios e valores que orientam o comportamento humano, ajudando a distinguir o que é certo do que é errado em uma sociedade.",
+        "Ética é um ramo da Filosofia que estuda os fundamentos das ações humanas, buscando compreender quais comportamentos são moralmente aceitáveis e por quê.",
+        "Ética é agir de forma responsável, respeitosa e justa nas relações com outras pessoas, considerando as consequências das próprias atitudes.",
+        "Ética é a reflexão crítica sobre a moral, ou seja, é o questionamento sobre o que devemos fazer, quais valores devemos seguir e como nossas decisões impactam os outros.",
+        "A ética é um ramo da filosofia que estuda e reflete sobre os princípios que orientam o comportamento humano, definindo o que é certo, justo e bom para o bem comum."
       ],
-      "keywords": ["keyword1", "keyword2"]
+      "keywords": ["ética", "princípios", "valores", "comportamento humano", "moral", "certo", "errado", "justo", "injusto", "decisões", "filosofia", "reflexão"]
     }
   ]
 }
