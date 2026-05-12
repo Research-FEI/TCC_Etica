@@ -3,7 +3,7 @@ import re
 import numpy as np
 
 from sklearn.metrics.pairwise import cosine_similarity
-from helpers import _questions, get_model, load_grade_prediction_model, concatanate_feedback, normalize_text
+from helpers import _questions, get_model, load_grade_prediction_model, concatanate_feedback, normalize_text, get_bert_embeddings
 from mock_test import _answers
 
 ### Done - All steps defined
@@ -92,12 +92,12 @@ def validate_keywords(keywords, student_answer):
 ### Under development
 def validate_semantic_similarity(reference_answers, student_answer):
     # Carrega o modelo semântico
-    model = get_model()
+    tokenizer, model = get_model()
     similarity = []
 
     for reference_answer in reference_answers:
         # Gera embeddings para ambas as respostas
-        embeddings = model.encode([student_answer, reference_answer])
+        embeddings = get_bert_embeddings([student_answer, reference_answer], tokenizer, model)
         
         # Calcula a similaridade semântica
         similarity.append(float(cosine_similarity(
@@ -144,24 +144,24 @@ def extract_features(student_answer, base_answer, similarity):
         student_sentences,
     ]])
 
-# def test_evaluate_answer():
-#     csv_path = 'api/results.csv'
-#     with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-#         writer = csv.writer(csvfile)
+def test_evaluate_answer():
+    csv_path = 'api/results.csv'
+    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
     
-#         # Cabeçalho do CSV
-#         writer.writerow(['question_id', 'answer', 'original_grade', 'evaluated_grade'])
+        # Cabeçalho do CSV
+        writer.writerow(['question_id', 'answer', 'original_grade', 'evaluated_grade'])
             
-#         for id in _answers.get('answers', []):
-#             respostas = id.get('answers')
+        for id in _answers.get('answers', []):
+            respostas = id.get('answers')
 
-#             for resposta in respostas:
-#                 answer = resposta.get('answer')
-#                 resultado = evaluate_answer(answer, id.get('id'))
-#                 grade = resposta.get('grade')
-#                 writer.writerow([id.get('id'), answer, grade, resultado.get('score')])       
+            for resposta in respostas:
+                answer = resposta.get('answer')
+                resultado = evaluate_answer(answer, id.get('id'))
+                grade = resposta.get('grade')
+                writer.writerow([id.get('id'), answer, grade, resultado.get('score')])       
 
-#     print("CSV gerado com sucesso!")
+    print("CSV gerado com sucesso!")
 
 
-# test_evaluate_answer()
+test_evaluate_answer()

@@ -15,7 +15,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score, mean_absolute_error
 import pickle
-from sentence_transformers import SentenceTransformer
+from helpers import get_model, get_bert_embeddings
 from sklearn.metrics.pairwise import cosine_similarity
 import os
 import sys
@@ -80,7 +80,7 @@ def load_data(path):
 # MODEL
 # =========================
 def load_semantic_transformer():
-    return SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+    return get_model()
 
 
 def extract_features(student_answer, base_answer, similarity):
@@ -123,7 +123,7 @@ def train_model(data_path):
         return False
 
     print("🤖 Carregando modelo de embeddings...")
-    transformer = load_semantic_transformer()
+    tokenizer, model = load_semantic_transformer()
 
     print("🔍 Extraindo features...")
     X = []
@@ -135,7 +135,7 @@ def train_model(data_path):
             base = str(row['Base_answer'])
             grade = float(row['Grade'])
 
-            emb = transformer.encode([student, base])
+            emb = get_bert_embeddings([student, base], tokenizer, model)
             sim = cosine_similarity([emb[0]], [emb[1]])[0][0]
 
             features = extract_features(student, base, sim)
