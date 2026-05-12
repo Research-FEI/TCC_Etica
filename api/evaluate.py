@@ -32,7 +32,7 @@ def evaluate_answer(student_answer, question_id: int):
         if try_same_text(answer, clean_student_answer):
             print("Resposta idêntica à referência, atribuindo nota máxima...")
             return {
-                "score": 10.0,
+                "score": 1.0,
                 "feedback": "Perfeito meu amigo, copiou do gabarito, ta colando né?"
             }
     
@@ -75,7 +75,7 @@ def validate_keywords(keywords, student_answer):
     if quantidade_keywords == 0:
         return 0, []
 
-    peso_keyword = 10 / quantidade_keywords
+    peso_keyword = 1.0 / quantidade_keywords
     keyword_score = 0
     missing_keywords = []
 
@@ -122,7 +122,7 @@ def predict_grade(student_answer, base_answer, similarity):
         features = extract_features(student_answer, base_answer, similarity)
         features_scaled = grade_scaler.transform(features)
         predicted_grade = grade_predictor.predict(features_scaled)[0]
-        return np.clip(float(predicted_grade), 0.0, 10.0)
+        return np.clip(float(predicted_grade), 0.0, 1.0)
     except Exception as e:
         print(f"⚠️ Erro ao prever grade: {e}")
         raise

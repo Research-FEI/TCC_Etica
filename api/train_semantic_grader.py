@@ -38,6 +38,10 @@ def load_csv(path):
     if not all(col in df.columns for col in required_cols):
         raise ValueError(f"CSV deve ter colunas: {required_cols}")
 
+    # Scale Grade to 0-1 if it's currently 0-10
+    if df['Grade'].max() > 1.0:
+        df['Grade'] = df['Grade'] / 10.0
+
     return df
 
 
@@ -55,11 +59,16 @@ def load_json(path):
         base_answer = answers_sorted[0]["answer"]
 
         for ans in question["answers"]:
+            grade = float(ans["grade"])
+            # Scale Grade to 0-1 if it's currently 0-10
+            if grade > 1.0:
+                grade = grade / 10.0
+                
             rows.append({
                 "Question": qid,
                 "Base_answer": base_answer,
                 "Student_answer": ans["answer"],
-                "Grade": ans["grade"]
+                "Grade": grade
             })
 
     return pd.DataFrame(rows)
