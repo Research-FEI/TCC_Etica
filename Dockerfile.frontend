@@ -2,9 +2,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Instalar dependências primeiro para cache
 COPY frontend/package*.json ./
-RUN npm ci
+RUN npm install
 
+# Copiar o restante
 COPY frontend ./
 
 EXPOSE 8080

@@ -7,7 +7,7 @@ from helpers import _questions, get_model, load_grade_prediction_model, concatan
 from mock_test import _answers
 
 ### Done - All steps defined
-def evaluate_answer(student_answer, question_id: int):
+def evaluate_answer(student_answer, question_id: int, scale_to_10: bool = False):
     #Begin validating parameters
     if not student_answer or not question_id:
         raise ValueError("Resposta do aluno e ID da questão são obrigatórias")
@@ -31,8 +31,11 @@ def evaluate_answer(student_answer, question_id: int):
     for answer in clean_reference_answers:
         if try_same_text(answer, clean_student_answer):
             print("Resposta idêntica à referência, atribuindo nota máxima...")
+            score = 1.0
+            if scale_to_10:
+                score = 10.0
             return {
-                "score": 1.0,
+                "score": score,
                 "feedback": "Perfeito meu amigo, copiou do gabarito, ta colando né?"
             }
     
@@ -46,6 +49,10 @@ def evaluate_answer(student_answer, question_id: int):
     
     # We use the ML model as the primary grader, it already considers keywords, similarity and length
     final_score, semantic_similarity_feedback = validate_semantic_similarity(clean_reference_answers, clean_student_answer, keywords)
+    
+    if scale_to_10:
+        final_score = final_score * 10.0
+        
     formatted_score = round(final_score, 2)
     
     return {

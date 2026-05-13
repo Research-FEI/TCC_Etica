@@ -23,8 +23,6 @@ except FileNotFoundError:
     _questions = {"questions": []}
     print(f"Arquivo de questões não encontrado em {questions_path}")
 
-print("Modelo de IA será carregado na primeira requisição de avaliação...")
-
 def get_model():
     global _tokenizer, _bert_model
     if _tokenizer is None or _bert_model is None:
@@ -69,7 +67,6 @@ def load_grade_prediction_model():
             print(f"⚠️ Erro ao carregar modelo de grades: {e}")
     
     return _grade_predictor, _grade_scaler
-
 
 ### Done - normalize text removing extra spaces and converting to lowercase
 def normalize_text(text: str) -> str:

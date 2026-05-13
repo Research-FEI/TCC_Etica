@@ -50,12 +50,15 @@ const Index = () => {
         const questionsArray = data.data?.questions || [];
         setQuestions(questionsArray);
         
-        // Seleciona uma pergunta aleatória
+        // Seleciona especificamente a questão ID 6
         if (questionsArray.length > 0) {
-          console.log("Fetched Questions:", questionsArray);
-          const randomQuestion = questionsArray[Math.floor(Math.random() * questionsArray.length)];
-          const questionToSet = questionsArray.at(-1);
-          setQuestion(questionToSet);
+          const q6 = questionsArray.find((q: Question) => q.id === 6);
+          if (q6) {
+            setQuestion(q6);
+          } else {
+            // Fallback para a última se ID 6 não existir (segurança)
+            setQuestion(questionsArray.at(-1));
+          }
         }
       } catch (error) {
         console.error('Error fetching questions:', error);
@@ -108,10 +111,12 @@ const Index = () => {
     setGrade(null);
     setGradeLabel(null);
     
-    // Seleciona uma nova pergunta aleatória
+    // Mantém a questão ID 6 ao resetar
     if (questions.length > 0) {
-      const randomQuestion = questions[Math.floor(Math.random() * questions.length)];
-      setQuestion(randomQuestion);
+      const q6 = questions.find((q: Question) => q.id === 6);
+      if (q6) {
+        setQuestion(q6);
+      }
     }
   };
 
@@ -215,7 +220,7 @@ const Index = () => {
                     className="gap-2 border-secondary text-secondary hover:bg-secondary/10"
                   >
                     <RotateCcw className="h-4 w-4" />
-                    Nova Questão
+                    Tentar Novamente
                   </Button>
                 </div>
               )}

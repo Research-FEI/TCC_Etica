@@ -2,16 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Instalar dependências usando cache mount para evitar re-downloads de 400MB+
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
-# Copia modelos treinados (se desejar embutir no build)
-# NOTA: docker-compose monta ./api em /app e sobrescreve o conteúdo do build.
-# Portanto em ambiente com volumes o código virá do host em /app.
-COPY api/Service/models /app/Service/models
+# Pré-download do modelo MPNet (1.1GB)
+RUN python3 -c "from transformers import AutoTokenizer, AutoModel; \
+    model_name = 'sentence-transformers/paraphrase-multilingual-mpnet-base-v2'; \
+    AutoTokenizer.from_pretrained(model_name); \
+    AutoModel.from_pretrained(model_name)"
 
+COPY api /app
 EXPOSE 8000
-
-# Ajustar PYTHONPATH para /app — corresponde ao volume ./api:/app no docker-compose
-ENV PYTHONPATH=/app:$PYTHONPATH
-CMD ["python", "-u", "/app/app.py"]
+ENV PYTHONPATH=/app
+CMD ["python", "-u", "app.py"]

@@ -13,6 +13,7 @@ services:
       - FLASK_DEBUG=1
     volumes:
       - ./api:/app
+      - hf_cache:/root/.cache/huggingface
     depends_on:
       - mongo
     restart: unless-stopped
@@ -41,3 +42,4 @@ services:
 
 volumes:
   mongo_data:
+  hf_cache:
