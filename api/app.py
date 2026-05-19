@@ -1,12 +1,20 @@
 import os
+import threading
 from flask_cors import CORS
 from flask import Flask, request, jsonify
 
-from helpers import _questions
+from helpers import _questions, get_model, load_grade_prediction_model
 from evaluate import evaluate_answer
 
 app = Flask(__name__)
 CORS(app)
+
+def preload_models():
+    """Carrega os modelos em background para não travar o início do servidor"""
+    print("🚀 [Background] Iniciando carregamento dos modelos de IA...")
+    get_model()
+    load_grade_prediction_model()
+    print("✨ [Background] Modelos de IA prontos para uso!")
 
 @app.route('/api/v1/questions', methods=['GET'])
 def get_all_questions():
@@ -40,7 +48,9 @@ def evaluate():
             }), 400
         
         # Usa a função do Core/evaluate.py
-        result = evaluate_answer(student_answer, question_id)
+        # Default to scale_to_10=True for the frontend endpoint
+        scale_to_10 = data.get("scale_to_10", True)
+        result = evaluate_answer(student_answer, question_id, scale_to_10=scale_to_10)
         
         return jsonify({
             "status": "success",
@@ -61,6 +71,9 @@ def evaluate():
 
 
 if __name__ == '__main__':
+    # Inicia o carregamento dos modelos em uma thread separada
+    threading.Thread(target=preload_models, daemon=True).start()
+
     port = int(os.environ.get('PORT', 3000))
     debug = os.environ.get('FLASK_DEBUG', '0') == '1'
     app.run(host='0.0.0.0', port=port, debug=debug)

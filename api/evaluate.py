@@ -3,11 +3,11 @@ import re
 import numpy as np
 
 from sklearn.metrics.pairwise import cosine_similarity
-from helpers import _questions, get_model, load_grade_prediction_model, concatanate_feedback, normalize_text
+from helpers import _questions, get_model, load_grade_prediction_model, concatanate_feedback, normalize_text, get_bert_embeddings
 from mock_test import _answers
 
 ### Done - All steps defined
-def evaluate_answer(student_answer, question_id: int):
+def evaluate_answer(student_answer, question_id: int, scale_to_10: bool = False):
     #Begin validating parameters
     if not student_answer or not question_id:
         raise ValueError("Resposta do aluno e ID da questão são obrigatórias")
@@ -31,8 +31,11 @@ def evaluate_answer(student_answer, question_id: int):
     for answer in clean_reference_answers:
         if try_same_text(answer, clean_student_answer):
             print("Resposta idêntica à referência, atribuindo nota máxima...")
+            score = 1.0
+            if scale_to_10:
+                score = 10.0
             return {
-                "score": 10.0,
+                "score": score,
                 "feedback": "Perfeito meu amigo, copiou do gabarito, ta colando né?"
             }
     
@@ -44,8 +47,12 @@ def evaluate_answer(student_answer, question_id: int):
             "feedback": "Nenhuma palavra-chave encontrada, revise os conceitos e tente novamente."
         }
     
-    semantic_similarity_score, semantic_similarity_feedback = validate_semantic_similarity(clean_reference_answers, clean_student_answer)
-    final_score = (0.40*keywords_score) + (0.60*semantic_similarity_score)
+    # We use the ML model as the primary grader, it already considers keywords, similarity and length
+    final_score, semantic_similarity_feedback = validate_semantic_similarity(clean_reference_answers, clean_student_answer, keywords)
+    
+    if scale_to_10:
+        final_score = final_score * 10.0
+        
     formatted_score = round(final_score, 2)
     
     return {
@@ -75,7 +82,7 @@ def validate_keywords(keywords, student_answer):
     if quantidade_keywords == 0:
         return 0, []
 
-    peso_keyword = 10 / quantidade_keywords
+    peso_keyword = 1.0 / quantidade_keywords
     keyword_score = 0
     missing_keywords = []
 
@@ -90,14 +97,14 @@ def validate_keywords(keywords, student_answer):
     return keyword_score, missing_keywords
 
 ### Under development
-def validate_semantic_similarity(reference_answers, student_answer):
+def validate_semantic_similarity(reference_answers, student_answer, keywords=None):
     # Carrega o modelo semântico
-    model = get_model()
+    tokenizer, model = get_model()
     similarity = []
 
     for reference_answer in reference_answers:
         # Gera embeddings para ambas as respostas
-        embeddings = model.encode([student_answer, reference_answer])
+        embeddings = get_bert_embeddings([student_answer, reference_answer], tokenizer, model)
         
         # Calcula a similaridade semântica
         similarity.append(float(cosine_similarity(
@@ -108,60 +115,82 @@ def validate_semantic_similarity(reference_answers, student_answer):
     # similarity_score = max(similarity) * 10 
 
     # Usa modelo treinado para prever a grade
-    score_final = predict_grade(student_answer, reference_answer, max(similarity))
+    score_final = predict_grade(student_answer, reference_answer, max(similarity), keywords)
     return score_final, "feedback do que ficou faltando para melhorar a nota"
 
 ### Under development
-def predict_grade(student_answer, base_answer, similarity):
+def predict_grade(student_answer, base_answer, similarity, keywords=None):
     grade_predictor, grade_scaler = load_grade_prediction_model()
     
     if grade_predictor is None or grade_scaler is None:
         raise RuntimeError("Modelo de predição de grades não encontrado. Execute o treinamento e salve o modelo antes de avaliar.")
     
     try:
-        features = extract_features(student_answer, base_answer, similarity)
+        features = extract_features(student_answer, base_answer, similarity, keywords)
         features_scaled = grade_scaler.transform(features)
         predicted_grade = grade_predictor.predict(features_scaled)[0]
-        return np.clip(float(predicted_grade), 0.0, 10.0)
+        return np.clip(float(predicted_grade), 0.0, 1.0)
     except Exception as e:
         print(f"⚠️ Erro ao prever grade: {e}")
         raise
 
 ### Under development
-def extract_features(student_answer, base_answer, similarity):
-
-    student_words = len(student_answer.split()) if student_answer else 0
+def extract_features(student_answer, base_answer, similarity, keywords=None):
+    # Word counts
+    student_tokens = student_answer.split()
+    student_words = len(student_tokens) if student_answer else 0
     base_words = len(base_answer.split()) if base_answer else 0
-    # Contar sentenças com pontuação básica
+
+    # Sentence counts
     student_sentences = max(1, len([s for s in re.split(r"[\.\!?]+", student_answer) if s.strip()]))
     
+    # Length ratio
     length_ratio = student_words / base_words if base_words > 0 else 0
-    
+
+    # Keyword overlap
+    keyword_ratio = 0
+    if keywords and student_answer:
+        found = 0
+        for kw in keywords:
+            if kw.lower() in student_answer.lower():
+                found += 1
+        keyword_ratio = found / len(keywords)
+
+    # Avg word length
+    avg_word_len = np.mean([len(w) for w in student_tokens]) if student_tokens else 0
+
+    # Punctuation density
+    punct_count = len(re.findall(r'[^\w\s]', student_answer))
+    punct_density = punct_count / len(student_answer) if student_answer else 0
+
     return np.array([[
         similarity,
         length_ratio,
         student_words,
         student_sentences,
+        keyword_ratio,
+        avg_word_len,
+        punct_density
     ]])
 
-# def test_evaluate_answer():
-#     csv_path = 'api/results.csv'
-#     with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-#         writer = csv.writer(csvfile)
-    
-#         # Cabeçalho do CSV
-#         writer.writerow(['question_id', 'answer', 'original_grade', 'evaluated_grade'])
-            
-#         for id in _answers.get('answers', []):
-#             respostas = id.get('answers')
+def test_evaluate_answer():
+    csv_path = 'api/results.csv'
+    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
 
-#             for resposta in respostas:
-#                 answer = resposta.get('answer')
-#                 resultado = evaluate_answer(answer, id.get('id'))
-#                 grade = resposta.get('grade')
-#                 writer.writerow([id.get('id'), answer, grade, resultado.get('score')])       
+        # Cabeçalho do CSV
+        writer.writerow(['question_id', 'answer', 'original_grade', 'evaluated_grade'])
 
-#     print("CSV gerado com sucesso!")
+        for id in _answers.get('answers', []):
+            respostas = id.get('answers')
 
+            for resposta in respostas:
+                answer = resposta.get('answer')
+                resultado = evaluate_answer(answer, id.get('id'))
+                grade = resposta.get('grade')
+                writer.writerow([id.get('id'), answer, grade, resultado.get('score')])
 
-# test_evaluate_answer()
+    print("CSV gerado com sucesso!")
+
+if __name__ == "__main__":
+    test_evaluate_answer()

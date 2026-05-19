@@ -2,11 +2,13 @@
 import re
 import os
 import pickle
+import torch
 from flask import json
-from sentence_transformers import SentenceTransformer
+from transformers import AutoTokenizer, AutoModel
 
 # Carrega o modelo uma única vez para reutilizá-lo
-_model = None
+_tokenizer = None
+_bert_model = None
 _grade_predictor = None
 _grade_scaler = None
 _questions = {"questions": []}
@@ -21,13 +23,31 @@ except FileNotFoundError:
     _questions = {"questions": []}
     print(f"Arquivo de questões não encontrado em {questions_path}")
 
-print("Modelo de IA será carregado na primeira requisição de avaliação...")
-
 def get_model():
-    global _model
-    if _model is None:
-        _model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-    return _model
+    global _tokenizer, _bert_model
+    if _tokenizer is None or _bert_model is None:
+        model_name = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+        _tokenizer = AutoTokenizer.from_pretrained(model_name)
+        _bert_model = AutoModel.from_pretrained(model_name)
+    return _tokenizer, _bert_model
+
+def mean_pooling(model_output, attention_mask):
+    token_embeddings = model_output[0] # First element of model_output contains all token embeddings
+    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+
+def get_bert_embeddings(texts, tokenizer, model):
+    # Tokenize input texts
+    encoded_input = tokenizer(texts, padding=True, truncation=True, return_tensors='pt')
+
+    # Compute token embeddings
+    with torch.no_grad():
+        model_output = model(**encoded_input)
+
+    # Perform pooling. In this case, mean pooling.
+    sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
+
+    return sentence_embeddings.numpy()
 
 def load_grade_prediction_model():
     global _grade_predictor, _grade_scaler
@@ -47,7 +67,6 @@ def load_grade_prediction_model():
             print(f"⚠️ Erro ao carregar modelo de grades: {e}")
     
     return _grade_predictor, _grade_scaler
-
 
 ### Done - normalize text removing extra spaces and converting to lowercase
 def normalize_text(text: str) -> str:
