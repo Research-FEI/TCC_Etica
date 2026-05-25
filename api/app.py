@@ -9,13 +9,19 @@ from evaluate import evaluate_answer
 app = Flask(__name__)
 CORS(app)
 
+### --------------------
+### Carrega os modelos na inicialização para evitar latência na primeira requisição
+### --------------------
 def preload_models():
-    """Carrega os modelos em background para não travar o início do servidor"""
-    print("🚀 [Background] Iniciando carregamento dos modelos de IA...")
     get_model()
     load_grade_prediction_model()
-    print("✨ [Background] Modelos de IA prontos para uso!")
 
+
+### --------------------
+### Endpoints para integração com o frontend
+### --------------------
+
+## Serve para retornar possíveis questões
 @app.route('/api/v1/questions', methods=['GET'])
 def get_all_questions():
     """Retorna todas as questões"""
@@ -25,7 +31,8 @@ def get_all_questions():
         "data": _questions
     }), 200
 
-
+## Parte mais importante: 
+# endpoint de avaliação de resposta do aluno
 @app.route('/api/v1/evaluate', methods=['POST'])
 def evaluate():
     """Endpoint de avaliação simples"""
@@ -49,6 +56,7 @@ def evaluate():
         
         # Usa a função do Core/evaluate.py
         # Default to scale_to_10=True for the frontend endpoint
+        # Faz isso para garantir que o frontend sempre receba uma nota de 0 a 10, mesmo que o modelo interno use outra escala
         scale_to_10 = data.get("scale_to_10", True)
         result = evaluate_answer(student_answer, question_id, scale_to_10=scale_to_10)
         
@@ -69,7 +77,7 @@ def evaluate():
             "error": str(e)
         }), 500
 
-
+## Manter para o docker saber o que subir como aplicação principal
 if __name__ == '__main__':
     # Inicia o carregamento dos modelos em uma thread separada
     threading.Thread(target=preload_models, daemon=True).start()

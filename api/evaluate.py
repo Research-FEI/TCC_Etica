@@ -6,7 +6,10 @@ from sklearn.metrics.pairwise import cosine_similarity
 from helpers import _questions, get_model, load_grade_prediction_model, concatanate_feedback, normalize_text, get_bert_embeddings
 from mock_test import _answers
 
-### Done - All steps defined
+### --------------------
+### Inicia o fluxo de avaliação da resposta do aluno
+### --------------------
+
 def evaluate_answer(student_answer, question_id: int, scale_to_10: bool = False):
     #Begin validating parameters
     if not student_answer or not question_id:
@@ -20,6 +23,7 @@ def evaluate_answer(student_answer, question_id: int, scale_to_10: bool = False)
             reference_answer = q["reference_answer"]
             keywords = q["keywords"]
 
+    #Normaliza o texto para reduzir possíveis erros 
     clean_reference_answers = [normalize_text(ans) for ans in reference_answer]
     clean_student_answer = normalize_text(student_answer)
 
@@ -30,7 +34,6 @@ def evaluate_answer(student_answer, question_id: int, scale_to_10: bool = False)
     #Validate if student answer is identical to reference answer (ignoring case and punctuation)
     for answer in clean_reference_answers:
         if try_same_text(answer, clean_student_answer):
-            print("Resposta idêntica à referência, atribuindo nota máxima...")
             score = 1.0
             if scale_to_10:
                 score = 10.0
@@ -48,13 +51,19 @@ def evaluate_answer(student_answer, question_id: int, scale_to_10: bool = False)
         }
     
     # We use the ML model as the primary grader, it already considers keywords, similarity and length
-    final_score, semantic_similarity_feedback = validate_semantic_similarity(clean_reference_answers, clean_student_answer, keywords)
+    model_score, semantic_similarity_feedback = validate_semantic_similarity(clean_reference_answers, clean_student_answer, keywords)
+    
+    final_score = (model_score * 0.6) + (keywords_score * 0.4)
     
     if scale_to_10:
-        final_score = final_score * 10.0
+        final_score = model_score * 10
         
     formatted_score = round(final_score, 2)
     
+    ## Aqui temos espaço para adicionar feedback, mas ainda não conseguimos encontrar qual a melhor forma de encontrar
+    # os gargalos nas respostas do aluno. Pensamos em apenas deixar quais palavras chaves estavam faltando
+    # mas como o tempo estava curto não seguimos com a ideia, então deixamos apenas estruturado para receber o feedback
+    # caso seja pensada alguma possível solução
     return {
         "score": formatted_score,
         "feedback": concatanate_feedback(missing_keywords, semantic_similarity_feedback)
@@ -72,6 +81,7 @@ def try_same_text(reference_answer, student_answer):
         if palavra in palavras2:
             iguais += 1
 
+    ## Valida se ao menos 90% das palavras são iguais só pra garantir se o aluno que não copiou do gabarito
     similaridade = iguais / total
     return similaridade >= 0.90
 
@@ -82,7 +92,7 @@ def validate_keywords(keywords, student_answer):
     if quantidade_keywords == 0:
         return 0, []
 
-    peso_keyword = 1.0 / quantidade_keywords
+    peso_keyword = 1.0 / quantidade_keywords # Distribui o peso igualmente entre as palavras-chave (Seria legal deixar isso dinâmico para cada pergunta dependendo da importância de cada palavra-chave, mas por enquanto deixamos igual)
     keyword_score = 0
     missing_keywords = []
 
@@ -96,7 +106,6 @@ def validate_keywords(keywords, student_answer):
 
     return keyword_score, missing_keywords
 
-### Under development
 def validate_semantic_similarity(reference_answers, student_answer, keywords=None):
     # Carrega o modelo semântico
     tokenizer, model = get_model()
@@ -111,14 +120,11 @@ def validate_semantic_similarity(reference_answers, student_answer, keywords=Non
             [embeddings[0]],
             [embeddings[1]]
         )[0][0]))
-    
-    # similarity_score = max(similarity) * 10 
 
     # Usa modelo treinado para prever a grade
     score_final = predict_grade(student_answer, reference_answer, max(similarity), keywords)
     return score_final, "feedback do que ficou faltando para melhorar a nota"
 
-### Under development
 def predict_grade(student_answer, base_answer, similarity, keywords=None):
     grade_predictor, grade_scaler = load_grade_prediction_model()
     
@@ -134,7 +140,6 @@ def predict_grade(student_answer, base_answer, similarity, keywords=None):
         print(f"⚠️ Erro ao prever grade: {e}")
         raise
 
-### Under development
 def extract_features(student_answer, base_answer, similarity, keywords=None):
     # Word counts
     student_tokens = student_answer.split()
@@ -173,24 +178,26 @@ def extract_features(student_answer, base_answer, similarity, keywords=None):
         punct_density
     ]])
 
-def test_evaluate_answer():
-    csv_path = 'api/results.csv'
-    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile)
+## Uncomment these next lines to test the evaluation process with the mock data and generate a CSV with results.
 
-        # Cabeçalho do CSV
-        writer.writerow(['question_id', 'answer', 'original_grade', 'evaluated_grade'])
+# def test_evaluate_answer():
+#     csv_path = 'api/results.csv'
+#     with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+#         writer = csv.writer(csvfile)
 
-        for id in _answers.get('answers', []):
-            respostas = id.get('answers')
+#         # Cabeçalho do CSV
+#         writer.writerow(['question_id', 'answer', 'original_grade', 'evaluated_grade'])
 
-            for resposta in respostas:
-                answer = resposta.get('answer')
-                resultado = evaluate_answer(answer, id.get('id'))
-                grade = resposta.get('grade')
-                writer.writerow([id.get('id'), answer, grade, resultado.get('score')])
+#         for id in _answers.get('answers', []):
+#             respostas = id.get('answers')
 
-    print("CSV gerado com sucesso!")
+#             for resposta in respostas:
+#                 answer = resposta.get('answer')
+#                 resultado = evaluate_answer(answer, id.get('id'))
+#                 grade = resposta.get('grade')
+#                 writer.writerow([id.get('id'), answer, grade, resultado.get('score')])
 
-if __name__ == "__main__":
-    test_evaluate_answer()
+#     print("CSV gerado com sucesso!")
+
+# if __name__ == "__main__":
+#     test_evaluate_answer()
