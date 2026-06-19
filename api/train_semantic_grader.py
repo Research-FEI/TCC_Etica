@@ -22,7 +22,7 @@ import pandas as pd
 import numpy as np
 import json
 import re
-from sklearn.model_selection import KFold, cross_val_score, cross_val_predict, GridSearchCV
+from sklearn.model_selection import StratifiedKFold, cross_val_score, cross_val_predict, GridSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
@@ -263,6 +263,7 @@ def train_model(data_path):
     print("🔍 Extraindo features...")
     X = []
     y = []
+    question_ids = []
 
     for idx, row in df.iterrows():
         try:
@@ -280,12 +281,14 @@ def train_model(data_path):
 
             X.append(features)
             y.append(grade)
+            question_ids.append(qid)
 
         except Exception as e:
             print(f"⚠️ Erro linha {idx}: {e}")
 
     X = np.array(X)
     y = np.array(y)
+    question_ids = np.array(question_ids)
 
     print(f"\n📊 Estatísticas das Notas:")
     print(f"Min: {y.min():.4f} | Max: {y.max():.4f} | Média: {y.mean():.4f}")
@@ -295,6 +298,13 @@ def train_model(data_path):
     # =========================
     print("\n🏋️ Otimizando hiperparâmetros com GridSearchCV (pipeline scaler+modelo)...")
 
+    # CV interna do tuning também estratificada por Question, pelo mesmo motivo
+    # da CV externa: evita que o GridSearchCV escolha hiperparâmetros que
+    # apenas se ajustam bem a uma composição de fold enviesada por questão.
+    N_TUNING_SPLITS = 3
+    skf_tuning = StratifiedKFold(n_splits=N_TUNING_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+    cv_tuning = list(skf_tuning.split(X, question_ids))
+
     rf_pipe = Pipeline([("scaler", StandardScaler()),
                         ("model", RandomForestRegressor(random_state=RANDOM_STATE))])
     rf_params = {
@@ -302,7 +312,7 @@ def train_model(data_path):
         "model__max_depth": [10, 20, None],
         "model__min_samples_split": [2, 5],
     }
-    gs_rf = GridSearchCV(rf_pipe, rf_params, cv=3, scoring="r2", n_jobs=-1)
+    gs_rf = GridSearchCV(rf_pipe, rf_params, cv=cv_tuning, scoring="r2", n_jobs=-1)
     gs_rf.fit(X, y)
     best_rf = gs_rf.best_estimator_
 
@@ -313,7 +323,7 @@ def train_model(data_path):
         "model__learning_rate": [0.05, 0.1],
         "model__max_depth": [3, 5],
     }
-    gs_gb = GridSearchCV(gb_pipe, gb_params, cv=3, scoring="r2", n_jobs=-1)
+    gs_gb = GridSearchCV(gb_pipe, gb_params, cv=cv_tuning, scoring="r2", n_jobs=-1)
     gs_gb.fit(X, y)
     best_gb = gs_gb.best_estimator_
 
@@ -327,8 +337,18 @@ def train_model(data_path):
     # =========================
     # VALIDAÇÃO CRUZADA (k-fold) — métricas para o artigo
     # =========================
-    print(f"\n🔁 Validação cruzada {N_SPLITS}-fold (métricas out-of-fold)...")
-    kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+    # Estratificada por Question (não por y, que é contínuo): cada fold mantém
+    # proporção semelhante de cada uma das 5 questões, evitando que a variância
+    # reportada (MAE_std/RMSE_std) reflita sorte do shuffle em vez de
+    # instabilidade real do modelo, dado o desempenho desigual por questão.
+    # Os índices são pré-computados (em vez de passar o objeto StratifiedKFold
+    # direto como `cv`) porque cross_val_predict/cross_val_score/GridSearchCV
+    # chamam cv.split(X, y) internamente quando recebem um objeto CV, o que
+    # estratificaria por y (a nota contínua) em vez de por Question.
+    print(f"\n🔁 Validação cruzada {N_SPLITS}-fold estratificada por questão "
+          f"(métricas out-of-fold)...")
+    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+    kf = list(skf.split(X, question_ids))
     metrics_df, oof_preds = cross_validate_models(models, X, y, kf)
 
     with pd.option_context("display.float_format", lambda v: f"{v:.4f}"):

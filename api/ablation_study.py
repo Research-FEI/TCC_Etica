@@ -59,7 +59,7 @@ import sys
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold, cross_val_predict, GridSearchCV
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, GridSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import GradientBoostingRegressor
@@ -115,11 +115,16 @@ def _safe_corr(fn, y_true, y_pred):
 # "componente semântico-estrutural" deste ablation use o MESMO modelo que
 # de fato venceu a seleção e foi salvo em produção)
 # --------------------------------------------------------------------------- #
-def tuned_gb_pipeline(X: np.ndarray, y: np.ndarray) -> Pipeline:
+def tuned_gb_pipeline(X: np.ndarray, y: np.ndarray, question_ids: np.ndarray) -> Pipeline:
     """Roda o GridSearchCV do GradientBoosting (mesma grade do
     train_semantic_grader.py) e retorna o melhor Pipeline (scaler + modelo),
     ainda NÃO ajustado nos dados completos -- cross_val_predict cuida do
-    fit/predict por fold internamente."""
+    fit/predict por fold internamente.
+
+    A CV interna do GridSearchCV (3 folds) é estratificada por `question_ids`,
+    pelo mesmo motivo da CV externa em train_semantic_grader.py: evita que o
+    tuning escolha hiperparâmetros ajustados a uma composição de fold
+    enviesada por questão, dado o desempenho desigual observado entre elas."""
     gb_pipe = Pipeline([("scaler", StandardScaler()),
                         ("model", GradientBoostingRegressor(random_state=RANDOM_STATE))])
     gb_params = {
@@ -127,7 +132,9 @@ def tuned_gb_pipeline(X: np.ndarray, y: np.ndarray) -> Pipeline:
         "model__learning_rate": [0.05, 0.1],
         "model__max_depth": [3, 5],
     }
-    gs_gb = GridSearchCV(gb_pipe, gb_params, cv=3, scoring="r2", n_jobs=-1)
+    skf_tuning = StratifiedKFold(n_splits=3, shuffle=True, random_state=RANDOM_STATE)
+    cv_tuning = list(skf_tuning.split(X, question_ids))
+    gs_gb = GridSearchCV(gb_pipe, gb_params, cv=cv_tuning, scoring="r2", n_jobs=-1)
     gs_gb.fit(X, y)
     print(f"   ↳ GradientBoosting tunado: melhores parâmetros = {gs_gb.best_params_}")
     return gs_gb.best_estimator_
@@ -159,7 +166,7 @@ def build_full_feature_matrix(data_path: str):
     tokenizer, model = load_semantic_transformer()
 
     print("🔍 Extraindo features completas...")
-    X, y = [], []
+    X, y, question_ids = [], [], []
     for idx, row in df.iterrows():
         try:
             student = str(row["Student_answer"])
@@ -175,16 +182,17 @@ def build_full_feature_matrix(data_path: str):
             features = extract_features(student, base, sim, keywords)
             X.append(features)
             y.append(grade)
+            question_ids.append(qid)
         except Exception as e:  # noqa: BLE001
             print(f"⚠️ Erro linha {idx}: {e}")
 
-    return np.array(X), np.array(y)
+    return np.array(X), np.array(y), np.array(question_ids)
 
 
 # --------------------------------------------------------------------------- #
 # (A) Ablação de features individuais
 # --------------------------------------------------------------------------- #
-def ablation_individual_features(X: np.ndarray, y: np.ndarray, kf):
+def ablation_individual_features(X: np.ndarray, y: np.ndarray, question_ids: np.ndarray, kf):
     """Retorna (DataFrame de resultados, dict de hiperparâmetros tunados do
     GradientBoosting), para que `main()` repasse os mesmos hiperparâmetros
     a `ablation_hybrid_components` sem rodar o GridSearchCV de novo."""
@@ -197,7 +205,7 @@ def ablation_individual_features(X: np.ndarray, y: np.ndarray, kf):
     # isolar o efeito da feature em si, sem variar também a arquitetura do
     # modelo a cada rodada.
     print("🏋️ Tunando GradientBoosting (modelo completo, todas as features)...")
-    best_gb_params = tuned_gb_pipeline(X, y).named_steps["model"].get_params()
+    best_gb_params = tuned_gb_pipeline(X, y, question_ids).named_steps["model"].get_params()
     gb_kwargs = {k: v for k, v in best_gb_params.items()
                  if k in ("n_estimators", "learning_rate", "max_depth")}
 
@@ -299,17 +307,23 @@ def main():
         sys.exit(f"❌ Arquivo não encontrado: {args.data}")
     os.makedirs(args.outdir, exist_ok=True)
 
-    X, y = build_full_feature_matrix(args.data)
+    X, y, question_ids = build_full_feature_matrix(args.data)
     if len(X) < N_SPLITS:
         sys.exit(f"❌ Poucos dados para {N_SPLITS}-fold CV (apenas {len(X)} amostras).")
 
-    kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+    # CV externa estratificada por questão (mesmo motivo documentado em
+    # train_semantic_grader.py): garante composição comparável de cada
+    # questão em todos os folds, evitando variância espúria nas métricas
+    # de ablação dado o desempenho desigual observado entre questões.
+    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+    kf = list(skf.split(X, question_ids))
 
     print("\n" + "=" * 78)
     print("(A) ABLAÇÃO — FEATURES ESTRUTURAIS INDIVIDUAIS")
-    print(f"    Validação cruzada {N_SPLITS}-fold, predições out-of-fold")
+    print(f"    Validação cruzada {N_SPLITS}-fold estratificada por questão, "
+          f"predições out-of-fold")
     print("=" * 78)
-    feat_df, gb_kwargs = ablation_individual_features(X, y, kf)
+    feat_df, gb_kwargs = ablation_individual_features(X, y, question_ids, kf)
     with pd.option_context("display.float_format", lambda v: f"{v:.4f}"):
         print(feat_df.to_string(index=False))
     p1 = os.path.join(args.outdir, "ablation_features_individuais.csv")
