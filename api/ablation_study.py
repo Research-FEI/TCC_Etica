@@ -18,12 +18,29 @@ Roda DOIS tipos de ablação:
 
   (B) COMPONENTES DO SCORE HÍBRIDO
       Reproduz a Composição Híbrida da Nota descrita na Seção III-D do TCC
-      (60% regressão semântico-estrutural via RandomForest + 40% cobertura
-      de palavras-chave) e compara três variantes:
-        - "Apenas semântico (BERT+estrutural)": só a saída do regressor,
+      (60% regressão semântico-estrutural + 40% cobertura de palavras-chave)
+      e compara quatro variantes:
+        - "Apenas semântico-estrutural": só a saída do regressor,
           sem o componente de palavras-chave (peso 100/0)
         - "Apenas palavras-chave": só keyword_ratio, sem o regressor (peso 0/100)
+        - "Apenas similaridade de cosseno": só o score bruto do BERT, sem
+          regressor e sem keywords (baseline adicional)
         - "Híbrido completo (60/40)": a composição usada no sistema final
+
+REGRESSOR USADO NO COMPONENTE SEMÂNTICO-ESTRUTURAL:
+    O regressor usado aqui é o GradientBoostingRegressor, tunado por
+    GridSearchCV com a MESMA grade de hiperparâmetros e o MESMO protocolo
+    (Pipeline scaler+modelo, CV interna de 3 folds, scoring="r2") definidos
+    em train_semantic_grader.py. Isso é proposital: o GridSearchCV em
+    train_semantic_grader.py seleciona automaticamente o melhor modelo entre
+    Ridge, RandomForest e GradientBoosting pelo R² médio em validação cruzada,
+    e o GradientBoosting tunado venceu essa comparação (ver cv_metrics.csv) --
+    é também o modelo de fato serializado em
+    Service/models/semantic_grade_model.pkl e usado em produção. Uma versão
+    anterior deste script usava um RandomForestRegressor não tunado
+    (n_estimators=200, sem GridSearchCV) nesta etapa, o que tornava a
+    ablação inconsistente com o modelo realmente treinado/implantado. Essa
+    inconsistência foi corrigida aqui.
 
 IMPORTANTE: este script reusa a MESMA extração de features e embeddings do
 train_semantic_grader.py (mesmo BERT/sentence-transformer, mesmo dataset),
@@ -42,10 +59,10 @@ import sys
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold, cross_val_predict
+from sklearn.model_selection import KFold, cross_val_predict, GridSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, cohen_kappa_score
 from sklearn.metrics.pairwise import cosine_similarity
 from scipy.stats import pearsonr, spearmanr
@@ -90,6 +107,30 @@ def _safe_corr(fn, y_true, y_pred):
         return float(fn(y_true, y_pred)[0])
     except Exception:  # noqa: BLE001
         return float("nan")
+
+
+# --------------------------------------------------------------------------- #
+# Regressor tunado: GradientBoosting via GridSearchCV
+# (mesma grade e protocolo de train_semantic_grader.py, para que o
+# "componente semântico-estrutural" deste ablation use o MESMO modelo que
+# de fato venceu a seleção e foi salvo em produção)
+# --------------------------------------------------------------------------- #
+def tuned_gb_pipeline(X: np.ndarray, y: np.ndarray) -> Pipeline:
+    """Roda o GridSearchCV do GradientBoosting (mesma grade do
+    train_semantic_grader.py) e retorna o melhor Pipeline (scaler + modelo),
+    ainda NÃO ajustado nos dados completos -- cross_val_predict cuida do
+    fit/predict por fold internamente."""
+    gb_pipe = Pipeline([("scaler", StandardScaler()),
+                        ("model", GradientBoostingRegressor(random_state=RANDOM_STATE))])
+    gb_params = {
+        "model__n_estimators": [100, 200],
+        "model__learning_rate": [0.05, 0.1],
+        "model__max_depth": [3, 5],
+    }
+    gs_gb = GridSearchCV(gb_pipe, gb_params, cv=3, scoring="r2", n_jobs=-1)
+    gs_gb.fit(X, y)
+    print(f"   ↳ GradientBoosting tunado: melhores parâmetros = {gs_gb.best_params_}")
+    return gs_gb.best_estimator_
 
 
 def compute_metrics(y_true, y_pred) -> dict:
@@ -143,13 +184,27 @@ def build_full_feature_matrix(data_path: str):
 # --------------------------------------------------------------------------- #
 # (A) Ablação de features individuais
 # --------------------------------------------------------------------------- #
-def ablation_individual_features(X: np.ndarray, y: np.ndarray, kf) -> pd.DataFrame:
+def ablation_individual_features(X: np.ndarray, y: np.ndarray, kf):
+    """Retorna (DataFrame de resultados, dict de hiperparâmetros tunados do
+    GradientBoosting), para que `main()` repasse os mesmos hiperparâmetros
+    a `ablation_hybrid_components` sem rodar o GridSearchCV de novo."""
     rows = []
+
+    # Hiperparâmetros do GradientBoosting tunados UMA VEZ no conjunto completo
+    # de features (mesma grade/protocolo de train_semantic_grader.py). Os
+    # mesmos hiperparâmetros são então reaplicados (re-tunando o scaler, mas
+    # não o GridSearchCV) a cada subconjunto com uma feature removida, para
+    # isolar o efeito da feature em si, sem variar também a arquitetura do
+    # modelo a cada rodada.
+    print("🏋️ Tunando GradientBoosting (modelo completo, todas as features)...")
+    best_gb_params = tuned_gb_pipeline(X, y).named_steps["model"].get_params()
+    gb_kwargs = {k: v for k, v in best_gb_params.items()
+                 if k in ("n_estimators", "learning_rate", "max_depth")}
 
     def _eval(X_subset, label):
         pipe = Pipeline([("scaler", StandardScaler()),
-                         ("model", RandomForestRegressor(
-                             n_estimators=200, random_state=RANDOM_STATE))])
+                         ("model", GradientBoostingRegressor(
+                             random_state=RANDOM_STATE, **gb_kwargs))])
         oof = cross_val_predict(pipe, X_subset, y, cv=kf)
         m = compute_metrics(y, oof)
         rows.append({"Configuração": label, "N_features": X_subset.shape[1], **m})
@@ -172,32 +227,38 @@ def ablation_individual_features(X: np.ndarray, y: np.ndarray, kf) -> pd.DataFra
 
     cols = ["Configuração", "N_features", "MAE", "ΔMAE_vs_completo", "RMSE",
             "R2", "QWK", "ΔQWK_vs_completo", "Pearson", "Spearman"]
-    return pd.DataFrame(rows)[cols]
+    return pd.DataFrame(rows)[cols], gb_kwargs
 
 
 # --------------------------------------------------------------------------- #
 # (B) Ablação dos componentes do score híbrido (60% regressor / 40% keywords)
 # --------------------------------------------------------------------------- #
-def ablation_hybrid_components(X: np.ndarray, y: np.ndarray, kf,
+def ablation_hybrid_components(X: np.ndarray, y: np.ndarray, kf, gb_kwargs: dict,
                                semantic_weight: float = 0.6) -> pd.DataFrame:
     """
     Reproduz a composição híbrida (Seção III-D): nota_final = w*regressor + (1-w)*keywords.
 
     O "componente de regressão semântico-estrutural" é a predição out-of-fold de um
-    RandomForest treinado com TODAS as features (incluindo similarity e keyword_ratio,
-    como no sistema original -- ver Seção III-C do TCC: o keyword_ratio também entra
-    como feature do regressor, além de compor a nota final diretamente). Já o
-    "componente de cobertura de conteúdo" é o keyword_ratio bruto, usado diretamente
-    como nota (0..1), sem passar pelo regressor.
+    GradientBoostingRegressor (tunado por GridSearchCV no mesmo protocolo de
+    train_semantic_grader.py -- ver `gb_kwargs`) treinado com TODAS as features
+    (incluindo similarity e keyword_ratio, como no sistema original -- ver Seção
+    III-C do TCC: o keyword_ratio também entra como feature do regressor, além
+    de compor a nota final diretamente). Já o "componente de cobertura de
+    conteúdo" é o keyword_ratio bruto, usado diretamente como nota (0..1), sem
+    passar pelo regressor.
+
+    `gb_kwargs` deve conter os hiperparâmetros já tunados (n_estimators,
+    learning_rate, max_depth) -- reaproveitados de ablation_individual_features
+    para não rodar o GridSearchCV de novo.
     """
     rows = []
 
-    # 1) Apenas o componente semântico-estrutural (RandomForest completo, peso 100%)
+    # 1) Apenas o componente semântico-estrutural (GradientBoosting tunado, peso 100%)
     pipe = Pipeline([("scaler", StandardScaler()),
-                     ("model", RandomForestRegressor(
-                         n_estimators=200, random_state=RANDOM_STATE))])
+                     ("model", GradientBoostingRegressor(
+                         random_state=RANDOM_STATE, **gb_kwargs))])
     oof_regressor = np.clip(cross_val_predict(pipe, X, y, cv=kf), 0, 1)
-    rows.append({"Componente": "Apenas semântico-estrutural (RandomForest, peso 100%)",
+    rows.append({"Componente": "Apenas semântico-estrutural (GradientBoosting, peso 100%)",
                  **compute_metrics(y, oof_regressor)})
 
     # 2) Apenas cobertura de palavras-chave (keyword_ratio bruto como nota, peso 100%)
@@ -248,7 +309,7 @@ def main():
     print("(A) ABLAÇÃO — FEATURES ESTRUTURAIS INDIVIDUAIS")
     print(f"    Validação cruzada {N_SPLITS}-fold, predições out-of-fold")
     print("=" * 78)
-    feat_df = ablation_individual_features(X, y, kf)
+    feat_df, gb_kwargs = ablation_individual_features(X, y, kf)
     with pd.option_context("display.float_format", lambda v: f"{v:.4f}"):
         print(feat_df.to_string(index=False))
     p1 = os.path.join(args.outdir, "ablation_features_individuais.csv")
@@ -258,7 +319,8 @@ def main():
     print("\n" + "=" * 78)
     print("(B) ABLAÇÃO — COMPONENTES DO SCORE HÍBRIDO")
     print("=" * 78)
-    hybrid_df = ablation_hybrid_components(X, y, kf, semantic_weight=args.hybrid_weight)
+    hybrid_df = ablation_hybrid_components(X, y, kf, gb_kwargs,
+                                           semantic_weight=args.hybrid_weight)
     with pd.option_context("display.float_format", lambda v: f"{v:.4f}"):
         print(hybrid_df.to_string(index=False))
     p2 = os.path.join(args.outdir, "ablation_componentes_hibrido.csv")
